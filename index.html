@@ -911,18 +911,22 @@ function buildCardSVG(vorname, nachname, jahr, nr) {
     <use href="#logo-ww" x="76" y="48.3" width="9" height="9"/>
   </g>`;
 
-  // Ausgabegröße: exakt 85 × 55 mm (Visitenkarte Trim, ohne Beschnitt)
-  // viewBox schneidet den 3-mm-Beschnittbereich ringsum ab:
-  //   Vorderseite Artboard: translate(5,12) -> Trim-Ursprung bei x=8, y=15
-  //   Rückseite   Artboard: translate(114,12) -> Trim-Ursprung bei x=117, y=15
-  //   Beide Seiten nebeneinander: viewBox startet bei (8,15), Breite=199, Höhe=55
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  // Zwei separate SVGs: je 85×55 mm (Trim, ohne Beschnitt)
+  // Vorderseite-Artboard: translate(5,12) -> Trim bei x=8, y=15
+  // Rückseite-Artboard:   translate(114,12) -> Trim bei x=117, y=15
+  const svgFront = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      width="85mm" height="55mm" viewBox="8 15 85 55">
   ${defs}
   ${front}
+</svg>`;
+  const svgBack = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="85mm" height="55mm" viewBox="117 15 85 55">
+  ${defs}
   ${back}
 </svg>`;
+  return { front: svgFront, back: svgBack };
 }
 
 // ============================================================
@@ -1033,15 +1037,19 @@ function downloadSingle(format) {
 
   if (!vorname || !nachname) { toast('⚠ Bitte Vor- und Nachname eingeben.'); return; }
 
-  const svg      = buildCardSVG(vorname, nachname, jahr, nr);
+  const card     = buildCardSVG(vorname, nachname, jahr, nr);
   const baseName = `Saisonausweis_${nr.toString().padStart(4,'0')}_${nachname}_${vorname}`;
 
   if (format === 'png') {
     toast('⏳ PNG wird gerendert …');
-    svgToPng(svg, baseName + '.png').then(() => toast('✓ PNG heruntergeladen'));
+    Promise.all([
+      svgToPng(card.front, baseName + '_Vorderseite.png'),
+      svgToPng(card.back,  baseName + '_Rueckseite.png'),
+    ]).then(() => toast('✓ Vorder- & Rückseite als PNG heruntergeladen'));
   } else {
-    triggerDownloadSvg(svg, baseName + '.svg');
-    toast('✓ SVG heruntergeladen');
+    triggerDownloadSvg(card.front, baseName + '_Vorderseite.svg');
+    setTimeout(() => triggerDownloadSvg(card.back, baseName + '_Rueckseite.svg'), 300);
+    toast('✓ Vorder- & Rückseite als SVG heruntergeladen');
   }
 }
 
@@ -1138,12 +1146,15 @@ async function downloadAll(format) {
   toast(`⬇ ${queue.length} Karten als ${fmt.toUpperCase()} werden heruntergeladen …`);
   for (let i = 0; i < queue.length; i++) {
     const { vorname, nachname, jahr, nr } = queue[i];
-    const svg      = buildCardSVG(vorname, nachname, jahr, nr);
+    const card     = buildCardSVG(vorname, nachname, jahr, nr);
     const baseName = `Saisonausweis_${padNr(nr)}_${nachname}_${vorname}`;
     if (fmt === 'png') {
-      await svgToPng(svg, baseName + '.png');
+      await svgToPng(card.front, baseName + '_Vorderseite.png');
+      await svgToPng(card.back,  baseName + '_Rueckseite.png');
     } else {
-      triggerDownloadSvg(svg, baseName + '.svg');
+      triggerDownloadSvg(card.front, baseName + '_Vorderseite.svg');
+      await new Promise(r => setTimeout(r, 200));
+      triggerDownloadSvg(card.back,  baseName + '_Rueckseite.svg');
     }
     await new Promise(r => setTimeout(r, fmt === 'png' ? 600 : 350));
   }
