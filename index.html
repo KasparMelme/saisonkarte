@@ -8,6 +8,7 @@
 <title>Saisonausweis-Generator · Wasserwacht Koberbachtalsperre</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="module">
   import { initializeApp }              from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
@@ -444,6 +445,10 @@
           <button class="btn btn-primary" onclick="downloadSingle('svg')">⬇ SVG</button>
           <button class="btn btn-blue"    onclick="downloadSingle('png')">⬇ PNG (300 dpi)</button>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <button class="btn btn-ghost" onclick="downloadSingle('pdf-single')">⬇ PDF einseitig</button>
+          <button class="btn btn-ghost" onclick="downloadSingle('pdf-duplex')">⬇ PDF Duplex</button>
+        </div>
         <button class="btn btn-ghost btn-full" onclick="addToQueue()">+ Zur Warteschlange hinzufügen</button>
       </div>
     </div>
@@ -476,12 +481,16 @@
           <div class="queue-empty">Noch keine Karten. Einzeln hinzufügen oder Excel importieren.</div>
         </div>
         <hr class="divider">
-        <div class="btn-group">
-          <button class="btn btn-primary btn-full" onclick="downloadAll('svg')">⬇ Alle als SVG</button>
-          <button class="btn btn-blue btn-full"    onclick="downloadAll('png')">⬇ Alle als PNG (300 dpi)</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <button class="btn btn-primary btn-full" onclick="downloadAll('svg')">⬇ Alle als SVG (ZIP)</button>
+          <button class="btn btn-blue btn-full"    onclick="downloadAll('png')">⬇ Alle als PNG (ZIP)</button>
         </div>
-        <p style="font-size:.74rem;color:var(--grey);margin-top:8px;text-align:center;">
-          Lädt jede Karte einzeln herunter.
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+          <button class="btn btn-ghost btn-full" onclick="downloadAll('pdf-single')">⬇ PDF einseitig</button>
+          <button class="btn btn-ghost btn-full" onclick="downloadAll('pdf-duplex')">⬇ PDF Duplex</button>
+        </div>
+        <p style="font-size:.74rem;color:var(--grey);margin-top:4px;text-align:center;">
+          PDF: 10 Karten pro A4-Seite · Duplex: Vorder-/Rückseiten auf getrennten Seiten
         </p>
       </div>
     </div>
@@ -1137,6 +1146,11 @@ function downloadSingle(format) {
   if (format === 'png') {
     toast('⏳ PNG wird gerendert …');
     svgToPng(svg, baseName + '.png').then(() => toast('✓ PNG heruntergeladen'));
+  } else if (format === 'pdf-single' || format === 'pdf-duplex') {
+    toast('⏳ PDF wird erstellt …');
+    buildPdf([{ vorname, nachname, jahr, nr }], format)
+      .then(pdf => { pdf.save(baseName + '.pdf'); toast('✓ PDF heruntergeladen'); })
+      .catch(e => toast('⚠ PDF-Fehler: ' + e.message));
   } else {
     triggerDownloadSvg(svg, baseName + '.svg');
     toast('✓ SVG heruntergeladen');
@@ -1192,6 +1206,167 @@ async function svgToPng(svgString, filename) {
 }
 
 // ============================================================
+//  PDF-GENERATOR
+// ============================================================
+//  PDF-GENERATOR  (Canvas 300 dpi)
+// ============================================================
+// Layout: A4 210×297mm | Karte 85×55mm | Rand 12.5/13mm
+// Duplex:    2×4 = 8 Karten/Seite  | GapX=15mm GapY=17mm
+// Einseitig: 4 Paare/Seite (Vorder+Rück nebeneinander) | GapY=17mm
+
+const PDF_CARD_W   = 85;
+const PDF_CARD_H   = 55;
+const PDF_MARGIN_X = 12.5;
+const PDF_MARGIN_Y = 13;
+const DUP_COLS     = 2;
+const DUP_ROWS     = 4;
+const DUP_GAP_X    = 15;   // (210 - 2×12.5 - 2×85) = 15mm
+const DUP_GAP_Y    = 17;   // (297 - 2×13  - 4×55) / 3 = 17mm
+const DUP_PER_PAGE = DUP_COLS * DUP_ROWS;  // 8
+const SNG_ROWS     = 4;
+const SNG_GAP_X    = 5;
+const SNG_GAP_Y    = 17;
+
+function dupPositions() {
+  const pos = [];
+  for (let row = 0; row < DUP_ROWS; row++)
+    for (let col = 0; col < DUP_COLS; col++)
+      pos.push({
+        x: PDF_MARGIN_X + col * (PDF_CARD_W + DUP_GAP_X),
+        y: PDF_MARGIN_Y + row * (PDF_CARD_H + DUP_GAP_Y),
+      });
+  return pos;
+}
+
+// SVG-String für eine Kartenseite (Vorder oder Rück)
+function buildSideSVG(vorname, nachname, jahr, nr, side) {
+  const combined = buildCardSVG(vorname, nachname, jahr, nr);
+  const vb = side === 'front' ? '8 15 85 55' : '117 15 85 55';
+  return combined
+    .replace(/viewBox="8 15 194 55"/, `viewBox="${vb}"`)
+    .replace(/width="170mm" height="55mm"/, 'width="85mm" height="55mm"');
+}
+
+// SVG → PNG-Blob (300 dpi, 85×55mm)
+function sideToPngBlob(vorname, nachname, jahr, nr, side) {
+  return new Promise((resolve, reject) => {
+    const DPI   = 300;
+    const MM2PX = DPI / 25.4;
+    const W_PX  = Math.round(PDF_CARD_W * MM2PX);  // 1004px
+    const H_PX  = Math.round(PDF_CARD_H * MM2PX);  // 650px
+    const svgStr = buildSideSVG(vorname, nachname, jahr, nr, side);
+    const blob   = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const url    = URL.createObjectURL(blob);
+    const img    = new Image();
+    img.onload = function() {
+      const canvas = document.createElement('canvas');
+      canvas.width = W_PX; canvas.height = H_PX;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, W_PX, H_PX);
+      ctx.drawImage(img, 0, 0, W_PX, H_PX);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('toBlob null')), 'image/png');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Render-Fehler')); };
+    img.src = url;
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+// Schneidemarken an Kartenecken
+function drawCutMarks(pdf, positions) {
+  const LEN = 3, GAP = 1;
+  pdf.setDrawColor(180); pdf.setLineWidth(0.15);
+  const drawn = new Set();
+  positions.forEach(({ x, y }) => {
+    [[x, y], [x + PDF_CARD_W, y],
+     [x, y + PDF_CARD_H], [x + PDF_CARD_W, y + PDF_CARD_H]].forEach(([cx, cy]) => {
+      const key = `${cx},${cy}`;
+      if (drawn.has(key)) return;
+      drawn.add(key);
+      const hDir = cx < 105 ? -1 : 1;
+      const vDir = cy < 148 ? -1 : 1;
+      pdf.line(cx + hDir * GAP, cy, cx + hDir * (GAP + LEN), cy);
+      pdf.line(cx, cy + vDir * GAP, cx, cy + vDir * (GAP + LEN));
+    });
+  });
+}
+
+async function buildPdf(cards, mode) {
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  if (mode === 'pdf-single') {
+    // ── EINSEITIG: Vorder + Rück nebeneinander, 4 Paare pro Seite ──────────
+    let firstPage = true;
+    for (let i = 0; i < cards.length; i++) {
+      const { vorname, nachname, jahr, nr } = cards[i];
+      const pageIdx = i % SNG_ROWS;
+      if (pageIdx === 0 && !firstPage) pdf.addPage();
+      firstPage = false;
+
+      const y      = PDF_MARGIN_Y + pageIdx * (PDF_CARD_H + SNG_GAP_Y);
+      const xFront = PDF_MARGIN_X;
+      const xBack  = PDF_MARGIN_X + PDF_CARD_W + SNG_GAP_X;
+
+      const frontBlob = await sideToPngBlob(vorname, nachname, jahr, nr, 'front');
+      const frontUrl  = await blobToDataUrl(frontBlob);
+      pdf.addImage(frontUrl, 'PNG', xFront, y, PDF_CARD_W, PDF_CARD_H);
+
+      const backBlob = await sideToPngBlob(vorname, nachname, jahr, nr, 'back');
+      const backUrl  = await blobToDataUrl(backBlob);
+      pdf.addImage(backUrl, 'PNG', xBack, y, PDF_CARD_W, PDF_CARD_H);
+
+      drawCutMarks(pdf, [{ x: xFront, y }, { x: xBack, y }]);
+    }
+
+  } else {
+    // ── DUPLEX: Seite 1 Vorderseiten, Seite 2 Rückseiten gespiegelt ────────
+    const pos    = dupPositions();
+    const chunks = [];
+    for (let i = 0; i < cards.length; i += DUP_PER_PAGE)
+      chunks.push(cards.slice(i, i + DUP_PER_PAGE));
+
+    for (let c = 0; c < chunks.length; c++) {
+      const chunk = chunks[c];
+      if (c > 0) pdf.addPage();
+
+      // Seite 1: Vorderseiten
+      for (let i = 0; i < chunk.length; i++) {
+        const { vorname, nachname, jahr, nr } = chunk[i];
+        const blob = await sideToPngBlob(vorname, nachname, jahr, nr, 'front');
+        const url  = await blobToDataUrl(blob);
+        pdf.addImage(url, 'PNG', pos[i].x, pos[i].y, PDF_CARD_W, PDF_CARD_H);
+      }
+      drawCutMarks(pdf, pos.slice(0, chunk.length));
+
+      // Seite 2: Rückseiten horizontal gespiegelt (col 0 ↔ col 1)
+      pdf.addPage();
+      for (let i = 0; i < chunk.length; i++) {
+        const { vorname, nachname, jahr, nr } = chunk[i];
+        const row       = Math.floor(i / DUP_COLS);
+        const col       = i % DUP_COLS;
+        const mirrorIdx = row * DUP_COLS + (DUP_COLS - 1 - col);
+        const blob = await sideToPngBlob(vorname, nachname, jahr, nr, 'back');
+        const url  = await blobToDataUrl(blob);
+        pdf.addImage(url, 'PNG', pos[mirrorIdx].x, pos[mirrorIdx].y, PDF_CARD_W, PDF_CARD_H);
+      }
+      drawCutMarks(pdf, pos.slice(0, chunk.length));
+    }
+  }
+  return pdf;
+}
+
+// ============================================================
 //  WARTESCHLANGE
 // ============================================================
 function addToQueue() {
@@ -1230,15 +1405,24 @@ function renderQueue() {
 async function downloadAll(format) {
   if (queue.length === 0) { toast('⚠ Warteschlange ist leer.'); return; }
   const fmt = format || 'svg';
+
+  if (fmt === 'pdf-single' || fmt === 'pdf-duplex') {
+    toast(`⏳ PDF wird erstellt (${queue.length} Karten) …`);
+    try {
+      const pdf = await buildPdf(queue, fmt);
+      const jahr = queue[0].jahr;
+      pdf.save(`Saisonausweise_${jahr}_${queue.length}Karten_${fmt === 'pdf-duplex' ? 'Duplex' : 'Einseitig'}.pdf`);
+      toast(`✓ PDF mit ${queue.length} Karten heruntergeladen`);
+    } catch(e) { toast('⚠ PDF-Fehler: ' + e.message); }
+    return;
+  }
+
   toast(`⏳ ZIP wird erstellt (${queue.length} Karten) …`);
-
   const zip = new JSZip();
-
   for (let i = 0; i < queue.length; i++) {
     const { vorname, nachname, jahr, nr } = queue[i];
     const svg      = buildCardSVG(vorname, nachname, jahr, nr);
     const baseName = `Saisonausweis_${padNr(nr)}_${nachname}_${vorname}`;
-
     if (fmt === 'png') {
       const blob = await svgToPngBlob(svg);
       zip.file(baseName + '.png', blob);
@@ -1246,7 +1430,6 @@ async function downloadAll(format) {
       zip.file(baseName + '.svg', svg);
     }
   }
-
   const zipBlob = await zip.generateAsync({ type: 'blob' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(zipBlob);
