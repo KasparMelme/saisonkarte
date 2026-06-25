@@ -7,6 +7,58 @@
 <link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzEwMjgzQSIvPjxyZWN0IHg9IjAiIHk9IjAiIHdpZHRoPSIzMiIgaGVpZ2h0PSI1IiByeD0iNiIgZmlsbD0iIzdBQjUxRCIvPjxyZWN0IHg9IjAiIHk9IjMiIHdpZHRoPSIzMiIgaGVpZ2h0PSIyIiBmaWxsPSIjN0FCNTFEIi8+PHBhdGggZD0iTTAsMjIgQzUsMjAgOSwyNCAxNiwyMiBDMjMsMjAgMjcsMjQgMzIsMjIgTDMyLDMyIEwwLDMyIFoiIGZpbGw9IiMwMDcwQjgiLz48cGF0aCBkPSJNMCwyNC41IEM1LDIzIDEwLDI2IDE2LDI0LjUgQzIyLDIzIDI3LDI2IDMyLDI0LjUgTDMyLDMyIEwwLDMyIFoiIGZpbGw9IiMxODk0RDYiLz48cmVjdCB4PSIxMy41IiB5PSI4IiB3aWR0aD0iNSIgaGVpZ2h0PSIxMyIgcng9IjEiIGZpbGw9IiNFMjAwMUEiLz48cmVjdCB4PSI5IiB5PSIxMiIgd2lkdGg9IjE0IiBoZWlnaHQ9IjUiIHJ4PSIxIiBmaWxsPSIjRTIwMDFBIi8+PC9zdmc+">
 <title>Saisonausweis-Generator · Wasserwacht Koberbachtalsperre</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="module">
+  import { initializeApp }              from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js";
+  import { getFirestore, doc, getDoc }  from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+  const firebaseConfig = {
+    apiKey:"AIzaSyA4sWYIRwdcWExA45ceNC1IEWzzdXqGHnM",
+    authDomain:"saisonkarte.firebaseapp.com",
+    projectId:"saisonkarte",
+    storageBucket:"saisonkarte.firebasestorage.app",
+    messagingSenderId:"67857563701",
+    appId:"1:67857563701:web:96b65afafb236e82f8b17c"
+  };
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+  signInAnonymously(auth)
+    .then(() => {
+      window._fbDb = db;
+      document.getElementById('pw-input').disabled  = false;
+      document.getElementById('pw-submit').disabled = false;
+      document.getElementById('pw-status').textContent = '';
+    })
+    .catch(() => {
+      document.getElementById('pw-status').textContent = '⚠ Firebase-Verbindung fehlgeschlagen. Seite neu laden.';
+    });
+  window.checkPassword = async function() {
+    const entered = document.getElementById('pw-input').value;
+    const btn     = document.getElementById('pw-submit');
+    const status  = document.getElementById('pw-status');
+    if (!entered) return;
+    btn.disabled = true;
+    status.textContent = '⏳ Prüfe …';
+    try {
+      const snap = await getDoc(doc(db, 'config', 'auth'));
+      if (!snap.exists()) throw new Error('Konfiguration nicht gefunden');
+      if (entered === snap.data().password) {
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('app-wrapper').style.display   = 'block';
+      } else {
+        status.textContent = '⚠ Falsches Passwort.';
+        document.getElementById('pw-input').value = '';
+        document.getElementById('pw-input').focus();
+        btn.disabled = false;
+      }
+    } catch(e) {
+      status.textContent = '⚠ Fehler: ' + e.message;
+      btn.disabled = false;
+    }
+  };
+  window.pwKeydown = function(e) { if (e.key === 'Enter') window.checkPassword(); };
+</script>
 <style>
   :root {
     --drk:    #E2001A;
@@ -249,11 +301,57 @@
 
   /* ---- Trennlinie ---- */
   .divider { border: none; border-top: 1.5px solid var(--border); margin: 16px 0; }
+  #login-overlay {
+    position: fixed; inset: 0; z-index: 999;
+    background: #F0F5F9;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .login-card {
+    background: #fff; border-radius: 14px;
+    box-shadow: 0 4px 32px rgba(16,40,58,.15);
+    padding: 40px 36px 32px;
+    width: 100%; max-width: 380px; text-align: center;
+  }
+  .login-logo { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 24px; }
+  .login-logo .bar { width: 4px; height: 36px; background: var(--drk); border-radius: 3px; }
+  .login-logo h1 { font-size: 1rem; font-weight: 800; color: var(--navy); text-align: left; line-height: 1.2; }
+  .login-logo p  { font-size: .75rem; color: var(--grey); text-align: left; margin-top: 2px; }
+  .login-card h2 { font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; }
+  .login-card > p { font-size: .82rem; color: var(--grey); margin-bottom: 22px; }
+  #pw-input {
+    width: 100%; padding: 11px 14px; font-size: 1rem;
+    border: 1.5px solid var(--border); border-radius: 8px;
+    margin-bottom: 10px; text-align: center; letter-spacing: .1em;
+  }
+  #pw-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,112,184,.12); }
+  #pw-submit {
+    width: 100%; padding: 11px; font-size: .95rem; font-weight: 700;
+    background: var(--drk); color: #fff; border: none; border-radius: 8px;
+    cursor: pointer; transition: filter .15s;
+  }
+  #pw-submit:hover:not(:disabled) { filter: brightness(1.1); }
+  #pw-submit:disabled { opacity: .5; cursor: default; }
+  #pw-status { margin-top: 10px; font-size: .82rem; color: var(--drk); min-height: 1.2em; }
 
 </style>
 </head>
 <body>
 
+<div id="login-overlay">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="bar"></div>
+      <div><h1>Saisonausweis-Generator</h1><p>Wasserwacht · Strandbad Koberbachtalsperre</p></div>
+    </div>
+    <h2>Geschützter Bereich</h2>
+    <p>Bitte Passwort eingeben, um fortzufahren.</p>
+    <input type="password" id="pw-input" placeholder="Passwort" disabled onkeydown="pwKeydown(event)">
+    <button id="pw-submit" disabled onclick="checkPassword()">Anmelden</button>
+    <div id="pw-status">⏳ Verbinde …</div>
+  </div>
+</div>
+
+<div id="app-wrapper" style="display:none">
 <header>
   <div class="logo-strip"></div>
   <div>
@@ -404,6 +502,8 @@
 </div>
 
 <div id="toast"></div>
+
+</div><!-- end app-wrapper -->
 
 <script>
 // ============================================================
@@ -911,22 +1011,16 @@ function buildCardSVG(vorname, nachname, jahr, nr) {
     <use href="#logo-ww" x="76" y="48.3" width="9" height="9"/>
   </g>`;
 
-  // Zwei separate SVGs: je 85×55 mm (Trim, ohne Beschnitt)
-  // Vorderseite-Artboard: translate(5,12) -> Trim bei x=8, y=15
-  // Rückseite-Artboard:   translate(114,12) -> Trim bei x=117, y=15
-  const svgFront = `<?xml version="1.0" encoding="UTF-8"?>
+  // Eine kombinierte SVG: 170×55 mm (Vorder- + Rückseite nebeneinander)
+  // Artboards liegen bei x=8..93 (Vorder) und x=117..202 (Rück), y=15..70
+  // viewBox umfasst beide: x=8, y=15, Breite=194, Höhe=55
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-     width="85mm" height="55mm" viewBox="8 15 85 55">
+     width="170mm" height="55mm" viewBox="8 15 194 55">
   ${defs}
   ${front}
-</svg>`;
-  const svgBack = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
-     width="85mm" height="55mm" viewBox="117 15 85 55">
-  ${defs}
   ${back}
 </svg>`;
-  return { front: svgFront, back: svgBack };
 }
 
 // ============================================================
@@ -1037,19 +1131,15 @@ function downloadSingle(format) {
 
   if (!vorname || !nachname) { toast('⚠ Bitte Vor- und Nachname eingeben.'); return; }
 
-  const card     = buildCardSVG(vorname, nachname, jahr, nr);
+  const svg      = buildCardSVG(vorname, nachname, jahr, nr);
   const baseName = `Saisonausweis_${nr.toString().padStart(4,'0')}_${nachname}_${vorname}`;
 
   if (format === 'png') {
     toast('⏳ PNG wird gerendert …');
-    Promise.all([
-      svgToPng(card.front, baseName + '_Vorderseite.png'),
-      svgToPng(card.back,  baseName + '_Rueckseite.png'),
-    ]).then(() => toast('✓ Vorder- & Rückseite als PNG heruntergeladen'));
+    svgToPng(svg, baseName + '.png').then(() => toast('✓ PNG heruntergeladen'));
   } else {
-    triggerDownloadSvg(card.front, baseName + '_Vorderseite.svg');
-    setTimeout(() => triggerDownloadSvg(card.back, baseName + '_Rueckseite.svg'), 300);
-    toast('✓ Vorder- & Rückseite als SVG heruntergeladen');
+    triggerDownloadSvg(svg, baseName + '.svg');
+    toast('✓ SVG heruntergeladen');
   }
 }
 
@@ -1064,44 +1154,41 @@ function triggerDownloadSvg(svgString, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// SVG -> Canvas -> PNG  (300 dpi, 85x55 mm)
-// 85 mm * (300/25.4) ≈ 1004 px  |  55 mm * (300/25.4) ≈ 650 px
-function svgToPng(svgString, filename) {
+// SVG -> Canvas -> PNG-Blob  (300 dpi, 170×55 mm)
+// 170 mm * (300/25.4) ≈ 2008 px  |  55 mm * (300/25.4) ≈ 650 px
+function svgToPngBlob(svgString) {
   return new Promise((resolve, reject) => {
-    const DPI    = 300;
-    const MM2PX  = DPI / 25.4;
-    const W_PX   = Math.round(85 * MM2PX);   // 1004
-    const H_PX   = Math.round(55 * MM2PX);   // 650
-
-    // SVG-String als Blob-URL, damit CORS-freie Quellen funktionieren
-    const blob   = new Blob([svgString], {type: 'image/svg+xml;charset=utf-8'});
-    const url    = URL.createObjectURL(blob);
-    const img    = new Image();
-
+    const DPI   = 300;
+    const MM2PX = DPI / 25.4;
+    const W_PX  = Math.round(170 * MM2PX);
+    const H_PX  = Math.round(55  * MM2PX);
+    const blob  = new Blob([svgString], {type: 'image/svg+xml;charset=utf-8'});
+    const url   = URL.createObjectURL(blob);
+    const img   = new Image();
     img.onload = function() {
       const canvas = document.createElement('canvas');
-      canvas.width  = W_PX;
-      canvas.height = H_PX;
+      canvas.width = W_PX; canvas.height = H_PX;
       const ctx = canvas.getContext('2d');
-      // Weißer Hintergrund (PNG-Standard für Druck)
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, W_PX, H_PX);
       ctx.drawImage(img, 0, 0, W_PX, H_PX);
       URL.revokeObjectURL(url);
-
-      canvas.toBlob(pngBlob => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(pngBlob);
-        a.download = filename;
-        document.body.appendChild(a); a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-        resolve();
-      }, 'image/png');
+      canvas.toBlob(resolve, 'image/png');
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG konnte nicht gerendert werden')); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Render-Fehler')); };
     img.src = url;
   });
+}
+
+// SVG -> PNG direkt herunterladen (Einzelkarte)
+async function svgToPng(svgString, filename) {
+  const pngBlob = await svgToPngBlob(svgString);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(pngBlob);
+  a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // ============================================================
@@ -1143,22 +1230,31 @@ function renderQueue() {
 async function downloadAll(format) {
   if (queue.length === 0) { toast('⚠ Warteschlange ist leer.'); return; }
   const fmt = format || 'svg';
-  toast(`⬇ ${queue.length} Karten als ${fmt.toUpperCase()} werden heruntergeladen …`);
+  toast(`⏳ ZIP wird erstellt (${queue.length} Karten) …`);
+
+  const zip = new JSZip();
+
   for (let i = 0; i < queue.length; i++) {
     const { vorname, nachname, jahr, nr } = queue[i];
-    const card     = buildCardSVG(vorname, nachname, jahr, nr);
+    const svg      = buildCardSVG(vorname, nachname, jahr, nr);
     const baseName = `Saisonausweis_${padNr(nr)}_${nachname}_${vorname}`;
+
     if (fmt === 'png') {
-      await svgToPng(card.front, baseName + '_Vorderseite.png');
-      await svgToPng(card.back,  baseName + '_Rueckseite.png');
+      const blob = await svgToPngBlob(svg);
+      zip.file(baseName + '.png', blob);
     } else {
-      triggerDownloadSvg(card.front, baseName + '_Vorderseite.svg');
-      await new Promise(r => setTimeout(r, 200));
-      triggerDownloadSvg(card.back,  baseName + '_Rueckseite.svg');
+      zip.file(baseName + '.svg', svg);
     }
-    await new Promise(r => setTimeout(r, fmt === 'png' ? 600 : 350));
   }
-  toast(`✓ ${queue.length} Dateien heruntergeladen`);
+
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(zipBlob);
+  a.download = `Saisonausweise_${queue[0].jahr}_${queue.length}Karten.zip`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`✓ ZIP mit ${queue.length} Karten heruntergeladen`);
 }
 
 // ============================================================
